@@ -93,12 +93,17 @@ db.collectionGroup('messages')
             // В. Отправляем пуш (НОВЫЙ API - HTTP v1)
             // Используем sendEachForMulticast вместо устаревшего sendToDevice
             const message = {
+                // Важно: Настройки для повышения приоритета (чтобы телефон проснулся)
+                android: { priority: 'high' },
+                webpush: { headers: { Urgency: 'high' } },
+                
+                // Данные для обработки (ВСЕ ЗНАЧЕНИЯ ДОЛЖНЫ БЫТЬ СТРОКАМИ)
                 data: {
-                    title: msg.displayName || "New Message",
-                    body: "Sent a message", // Текст сообщения (или "Encrypted message")
-                    icon: 'https://via.placeholder.com/192.png/818cf8/ffffff?text=N', // Ссылка на иконку
-                    tag: 'chat-messages', // Группировка: уведомления с одним тегом заменяют друг друга
-                    url: '/' // Куда переходить при клике
+                    title: String(msg.displayName || "New Message"),
+                    body: "Sent a message",
+                    icon: 'https://via.placeholder.com/192.png/818cf8/ffffff?text=N',
+                    tag: 'chat-messages',
+                    url: '/index.html'
                 },
                 tokens: tokensToSend
             };
