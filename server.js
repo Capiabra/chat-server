@@ -1,7 +1,7 @@
 const admin = require('firebase-admin');
+const http = require('http'); // Добавляем модуль для создания сервера
 
-// Мы будем передавать ключи через "Переменные окружения" на Render, чтобы не светить файл
-// Но для локального теста можешь вставить сюда содержимое JSON файла
+// 1. ПОДКЛЮЧЕНИЕ FIREBASE
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
 admin.initializeApp({
@@ -11,10 +11,21 @@ admin.initializeApp({
 const db = admin.firestore();
 const messaging = admin.messaging();
 
-console.log("Server started! Listening for new messages...");
+// 2. ФЕЙКОВЫЙ СЕРВЕР ДЛЯ RENDER.COM
+// Render требует, чтобы Web Service слушал порт. Иначе он убьет приложение.
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Push Server is Running!');
+});
+// Render автоматически дает порт в переменной process.env.PORT
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+  console.log(`Fake server listening on port ${PORT} to keep Render happy.`);
+});
 
-// Слушаем ВСЕ под-коллекции 'messages' во всей базе
-// .where проверяет, что сообщение новое (создано после запуска сервера)
+// 3. ОСНОВНАЯ ЛОГИКА
+console.log("Firestore Listener started...");
+
 const now = admin.firestore.Timestamp.now();
 
 db.collectionGroup('messages')
@@ -23,47 +34,70 @@ db.collectionGroup('messages')
     snapshot.docChanges().forEach(async (change) => {
       if (change.type === 'added') {
         const msg = change.doc.data();
-        const chatId = change.doc.ref.parent.parent.id; // Получаем ID чата
+        // Защита от старых сообщений при рестарте (иногда бывает)
+        if (msg.createdAt && msg.createdAt.toMillis() < Date.now() - 60000) return;
 
-        console.log(`New message in chat ${chatId} from ${msg.displayName}`);
+        const chatId = change.doc.ref.parent.parent.id; 
 
-        // 1. Получаем инфо о чате, чтобы узнать участников
-        const chatDoc = await db.collection('chats').doc(chatId).get();
-        if (!chatDoc.exists) return;
-        const chatData = chatDoc.data();
+        console.log(`🔔 Event: New message in chat ${chatId} from ${msg.displayName}`);
 
-        // 2. Ищем токены получателей
-        const tokensToSend = [];
-        
-        // Проходим по всем участникам
-        for (const uid of chatData.participants) {
-            if (uid === msg.uid) continue; // Не шлем самому себе
-
-            // Берем токен из active_users
-            const userDoc = await db.collection('active_users').doc(uid).get();
-            if (userDoc.exists && userDoc.data().fcmToken) {
-                tokensToSend.push(userDoc.data().fcmToken);
+        try {
+            // А. Получаем участников чата
+            const chatDoc = await db.collection('chats').doc(chatId).get();
+            if (!chatDoc.exists) {
+                console.log(`Chat ${chatId} not found.`);
+                return;
             }
+            const chatData = chatDoc.data();
+            console.log(`Participants: ${JSON.stringify(chatData.participants)}`);
+
+            // Б. Собираем токены
+            const tokensToSend = [];
+            
+            for (const uid of chatData.participants) {
+                // Пропускаем отправителя (не шлем пуш самому себе)
+                if (uid === msg.uid) {
+                    console.log(`Skipping sender: ${uid}`);
+                    continue; 
+                }
+
+                // Ищем токен получателя
+                const userDoc = await db.collection('active_users').doc(uid).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    if (userData.fcmToken) {
+                        console.log(`Found token for user ${userData.name}: ${userData.fcmToken.substring(0, 10)}...`);
+                        tokensToSend.push(userData.fcmToken);
+                    } else {
+                        console.log(`User ${userData.name || uid} has NO fcmToken.`);
+                    }
+                } else {
+                    console.log(`User ${uid} not found in active_users.`);
+                }
+            }
+
+            if (tokensToSend.length === 0) {
+                console.log("⚠️ No tokens found to send. Aborting.");
+                return;
+            }
+
+            // В. Отправляем пуш
+            const payload = {
+              notification: {
+                title: msg.displayName || "New Message",
+                body: "Send a message", 
+              }
+            };
+
+            const response = await messaging.sendToDevice(tokensToSend, payload);
+            console.log(`✅ Success: Sent ${response.successCount} messages.`);
+            if (response.failureCount > 0) {
+                console.log(`❌ Failed: ${response.failureCount}. Error: ${JSON.stringify(response.results)}`);
+            }
+
+        } catch (error) {
+            console.error("🔥 Error in logic:", error);
         }
-
-        if (tokensToSend.length === 0) return;
-
-        // 3. Отправляем пуш
-        // Текст зашифрован, поэтому пишем общее сообщение
-        const payload = {
-          notification: {
-            title: msg.displayName,
-            body: "New Message 🔒", 
-          }
-        };
-
-        messaging.sendToDevice(tokensToSend, payload)
-          .then(response => {
-            console.log('Successfully sent message:', response.successCount);
-          })
-          .catch(error => {
-            console.log('Error sending message:', error);
-          });
       }
     });
   });
