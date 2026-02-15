@@ -101,7 +101,7 @@ db.collectionGroup('messages')
                 data: {
                     title: String(msg.displayName || "New Message"),
                     body: "Sent a message",
-                    icon: 'https://via.placeholder.com/192.png/818cf8/ffffff?text=N',
+                    icon: 'https://api.dicebear.com/9.x/initials/png?seed=Notebook&backgroundColor=818cf8',
                     tag: 'chat-messages',
                     url: '/index.html'
                 },
