@@ -93,11 +93,14 @@ db.collectionGroup('messages')
             // В. Отправляем пуш (НОВЫЙ API - HTTP v1)
             // Используем sendEachForMulticast вместо устаревшего sendToDevice
             const message = {
-                notification: {
+                data: {
                     title: msg.displayName || "New Message",
-                    body: "Sent a message" // Текст зашифрован, пишем общее
+                    body: "Sent a message", // Текст сообщения (или "Encrypted message")
+                    icon: 'https://via.placeholder.com/192.png/818cf8/ffffff?text=N', // Ссылка на иконку
+                    tag: 'chat-messages', // Группировка: уведомления с одним тегом заменяют друг друга
+                    url: '/' // Куда переходить при клике
                 },
-                tokens: tokensToSend // Массив токенов
+                tokens: tokensToSend
             };
 
             const response = await messaging.sendEachForMulticast(message);
